@@ -1,3 +1,4 @@
+// components/Sender.js
 import React, { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 
@@ -22,7 +23,11 @@ export function Sender() {
     const pcMap = new Map();
 
     socket.on('viewer-joined', async (viewerSocketId) => {
-      const pc = new RTCPeerConnection();
+      const pc = new RTCPeerConnection({
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' }
+        ]
+      });
 
       pc.onicecandidate = e => {
         if (e.candidate) socket.emit('ice-candidate', { candidate: e.candidate, target: viewerSocketId });
