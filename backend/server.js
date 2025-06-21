@@ -1,56 +1,47 @@
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
-const cors = require('cors');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
+const cors = require('cors');
 
 const app = express();
-
-// Enable CORS (Allow all origins or restrict to frontend domain)
-app.use(cors());
-
-// Serve static frontend if needed (optional)
-app.use(express.static(path.join(__dirname, 'public')));
-
-// Create HTTP server
 const server = http.createServer(app);
 
-// Set up Socket.IO with CORS
+// Enable CORS and serve static frontend
+app.use(cors());
+app.use(express.static(path.join(__dirname, 'public')));
+
 const io = socketIo(server, {
   cors: {
-    origin: '*', // Replace with your frontend domain if needed
+    origin: '*',
     methods: ['GET', 'POST'],
   },
 });
 
-// Store roomId -> broadcaster socket ID
+// In-memory map of roomId -> broadcaster socket ID
 const sessions = {};
 
 io.on('connection', (socket) => {
   console.log('🔌 Client connected:', socket.id);
 
-  // Broadcaster creates a room
   socket.on('create-room', () => {
     const roomId = uuidv4();
     sessions[roomId] = socket.id;
     socket.emit('room-created', roomId);
-    console.log(`📺 Room created: ${roomId} by ${socket.id}`);
+    console.log(`🎥 Room created: ${roomId}`);
   });
 
-  // Viewer joins a room
   socket.on('join-room', (roomId) => {
     const broadcasterId = sessions[roomId];
     if (broadcasterId) {
       socket.to(broadcasterId).emit('viewer-joined', socket.id);
-      console.log(`👀 Viewer ${socket.id} joined room ${roomId}`);
+      console.log(`👤 Viewer ${socket.id} joined room ${roomId}`);
     } else {
       socket.emit('error', 'Room not found');
-      console.warn(`❌ Room ${roomId} not found`);
     }
   });
 
-  // WebRTC signaling events
   socket.on('offer', ({ offer, target }) => {
     io.to(target).emit('offer', { offer, sender: socket.id });
   });
@@ -63,26 +54,25 @@ io.on('connection', (socket) => {
     io.to(target).emit('ice-candidate', candidate);
   });
 
-  // Clean up rooms on disconnect
   socket.on('disconnect', () => {
-    console.log('❌ Client disconnected:', socket.id);
+    console.log('❌ Disconnected:', socket.id);
+    // Remove rooms created by this socket
     for (const roomId in sessions) {
       if (sessions[roomId] === socket.id) {
         delete sessions[roomId];
-        console.log(`🗑️ Removed room ${roomId}`);
+        console.log(`🗑️ Room deleted: ${roomId}`);
       }
     }
   });
 });
 
-// Fallback route (only if serving frontend from same server)
+// Catch-all: Serve React app on any route (for direct link access like /?roomId=abc)
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Use dynamic port for Render (default to 3000 locally)
+// Start the server
 const PORT = process.env.PORT || 3000;
-
 server.listen(PORT, () => {
-  console.log(`✅ Server running on port ${PORT}`);
+  console.log(`🚀 Server listening on port ${PORT}`);
 });
