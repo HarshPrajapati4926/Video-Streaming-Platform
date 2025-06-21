@@ -1,3 +1,4 @@
+// App.js
 import React, { useState, useEffect } from 'react';
 import { Sender } from './components/Sender';
 import { Viewer } from './components/Viewer';
@@ -25,12 +26,6 @@ export default function App() {
             >
               Sender
             </button>
-            {/* <button
-              onClick={() => setRole('viewer')}
-              className="bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-lg transition duration-300"
-            >
-              Viewer
-            </button> */}
           </div>
         </div>
       ) : (
