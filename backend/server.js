@@ -2,7 +2,6 @@ const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const cors = require('cors');
-const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 
 const app = express();
@@ -15,7 +14,6 @@ const io = socketIo(server, {
   },
 });
 
-// Stores roomId -> senderSocketId
 const sessions = {};
 
 io.on('connection', (socket) => {
@@ -58,8 +56,7 @@ io.on('connection', (socket) => {
   });
 });
 
-// Start server
-const PORT = 3000;
-server.listen(PORT, () => {
-  console.log(`✅ Server running at http://localhost:${PORT}`);
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Server running on port ${PORT}`);
 });
