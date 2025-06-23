@@ -1,84 +1,52 @@
 import React, { useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
-import { motion } from 'framer-motion';
-import { FaEye } from 'react-icons/fa';
 
 const socket = io('https://video-streaming-platform-bf1p.onrender.com');
 
 export function Viewer() {
   const videoRef = useRef(null);
+  let pc = useRef(null);
 
   useEffect(() => {
     const roomId = new URLSearchParams(window.location.search).get('roomId');
     if (!roomId) return;
 
-    const pc = new RTCPeerConnection({
+    pc.current = new RTCPeerConnection({
       iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     });
 
-    let senderSocketId = null;
-
-    pc.ontrack = (event) => {
-      const incomingStream = event.streams[0];
-      if (videoRef.current.srcObject !== incomingStream) {
-        videoRef.current.srcObject = incomingStream;
+    pc.current.ontrack = event => {
+      if (videoRef.current.srcObject !== event.streams[0]) {
+        videoRef.current.srcObject = event.streams[0];
       }
     };
 
-    pc.onicecandidate = (e) => {
-      if (e.candidate && senderSocketId) {
-        socket.emit('ice-candidate', {
-          candidate: e.candidate,
-          target: senderSocketId
-        });
+    pc.current.onicecandidate = e => {
+      if (e.candidate) {
+        socket.emit('ice-candidate', { candidate: e.candidate, target: roomId });
       }
     };
 
     socket.emit('join-room', roomId);
 
     socket.on('offer', async ({ offer, sender }) => {
-      senderSocketId = sender;
-      await pc.setRemoteDescription(new RTCSessionDescription(offer));
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
+      await pc.current.setRemoteDescription(new RTCSessionDescription(offer));
+      const answer = await pc.current.createAnswer();
+      await pc.current.setLocalDescription(answer);
       socket.emit('answer', { answer, target: sender });
     });
 
-    socket.on('ice-candidate', (candidate) => {
-      pc.addIceCandidate(new RTCIceCandidate(candidate));
+    socket.on('ice-candidate', ({ candidate, from }) => {
+      pc.current.addIceCandidate(new RTCIceCandidate(candidate));
     });
 
-    return () => pc.close();
+    return () => pc.current.close();
   }, []);
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5 }}
-      className="min-h-screen bg-gradient-to-br from-purple-100 via-white to-blue-100 flex flex-col items-center justify-center p-6"
-    >
-      <motion.h2
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.2, duration: 0.5 }}
-        className="text-3xl font-bold mb-6 text-gray-800 flex items-center gap-2"
-      >
-        <FaEye className="text-purple-600" />
-        Viewer
-      </motion.h2>
-
-      <motion.video
-        initial={{ scale: 0.95, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        transition={{ duration: 0.6 }}
-        ref={videoRef}
-        autoPlay
-        playsInline
-        controls
-        onLoadedMetadata={() => (videoRef.current.volume = 1)}
-        className="w-full max-w-3xl rounded-2xl shadow-lg border border-gray-300"
-      />
-    </motion.div>
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+      <h2 className="mb-4 text-xl font-semibold text-gray-800">👁️ Viewer</h2>
+      <video ref={videoRef} autoPlay playsInline controls className="w-full max-w-3xl rounded shadow" />
+    </div>
   );
 }
