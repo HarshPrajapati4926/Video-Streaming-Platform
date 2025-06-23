@@ -11,15 +11,16 @@ export function Viewer() {
     if (!roomId) return;
 
     const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' }
-      ]
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     });
 
     let senderSocketId = null;
 
     pc.ontrack = (event) => {
-      videoRef.current.srcObject = event.streams[0];
+      const incomingStream = event.streams[0];
+      if (videoRef.current.srcObject !== incomingStream) {
+        videoRef.current.srcObject = incomingStream;
+      }
     };
 
     pc.onicecandidate = (e) => {
@@ -51,7 +52,14 @@ export function Viewer() {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6">
       <h2 className="text-xl font-semibold mb-4 text-gray-800">👁️ Viewer</h2>
-      <video ref={videoRef} autoPlay playsInline controls className="w-full max-w-3xl rounded shadow" />
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        controls
+        onLoadedMetadata={() => (videoRef.current.volume = 1)}
+        className="w-full max-w-3xl rounded shadow"
+      />
     </div>
   );
 }

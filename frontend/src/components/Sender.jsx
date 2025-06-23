@@ -23,13 +23,13 @@ export function Sender() {
 
     socket.on('viewer-joined', async (viewerSocketId) => {
       const pc = new RTCPeerConnection({
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' }
-        ]
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
       });
 
       pc.onicecandidate = e => {
-        if (e.candidate) socket.emit('ice-candidate', { candidate: e.candidate, target: viewerSocketId });
+        if (e.candidate) {
+          socket.emit('ice-candidate', { candidate: e.candidate, target: viewerSocketId });
+        }
       };
 
       const video = videoRef.current;
@@ -39,14 +39,28 @@ export function Sender() {
       canvas.width = video.videoWidth || 640;
       canvas.height = video.videoHeight || 360;
       const ctx = canvas.getContext('2d');
+
       function draw() {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         requestAnimationFrame(draw);
       }
       draw();
 
-      const stream = canvas.captureStream(30);
-      stream.getTracks().forEach(track => pc.addTrack(track, stream));
+      const canvasStream = canvas.captureStream(30);
+
+      let audioStream = null;
+      try {
+        audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (err) {
+        console.error('Microphone access denied:', err);
+      }
+
+      const combinedStream = new MediaStream([
+        ...canvasStream.getVideoTracks(),
+        ...(audioStream ? audioStream.getAudioTracks() : [])
+      ]);
+
+      combinedStream.getTracks().forEach(track => pc.addTrack(track, combinedStream));
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
@@ -70,7 +84,12 @@ export function Sender() {
       }
     });
 
-    return () => pcMap.forEach(pc => pc.close());
+    return () => {
+      pcMap.forEach(pc => pc.close());
+      socket.off('viewer-joined');
+      socket.off('answer');
+      socket.off('ice-candidate');
+    };
   }, [videoFile, startBroadcast, roomId]);
 
   const handleFileChange = (e) => {
