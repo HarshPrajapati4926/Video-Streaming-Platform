@@ -52,11 +52,19 @@ export function Sender() {
       }
       draw();
 
-      const videoStream = canvas.captureStream(30);
-      const audioTracks = video.captureStream().getAudioTracks();
-      audioTracks.forEach(track => videoStream.addTrack(track));
+      const canvasStream = canvas.captureStream(30);
 
-      videoStream.getTracks().forEach(track => pc.addTrack(track, videoStream));
+      // ✅ Clone audio track per viewer
+      const audioTrack = video.captureStream().getAudioTracks()[0];
+      if (audioTrack) {
+        const clonedAudioTrack = audioTrack.clone();
+        canvasStream.addTrack(clonedAudioTrack);
+      }
+
+      // Add cloned tracks to peer connection
+      canvasStream.getTracks().forEach((track) => {
+        pc.addTrack(track, canvasStream);
+      });
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
