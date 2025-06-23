@@ -7,22 +7,20 @@ const socket = io('https://video-streaming-platform-bf1p.onrender.com');
 
 export function Viewer() {
   const videoRef = useRef(null);
-  const pcRef = useRef(null);
 
   useEffect(() => {
     const roomId = new URLSearchParams(window.location.search).get('roomId');
     if (!roomId) return;
 
     const pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     });
-    pcRef.current = pc;
 
     let senderSocketId = null;
 
     pc.ontrack = (event) => {
       const incomingStream = event.streams[0];
-      if (videoRef.current && videoRef.current.srcObject !== incomingStream) {
+      if (videoRef.current.srcObject !== incomingStream) {
         videoRef.current.srcObject = incomingStream;
       }
     };
@@ -31,45 +29,26 @@ export function Viewer() {
       if (e.candidate && senderSocketId) {
         socket.emit('ice-candidate', {
           candidate: e.candidate,
-          target: senderSocketId,
+          target: senderSocketId
         });
       }
     };
 
     socket.emit('join-room', roomId);
 
-    const handleOffer = async ({ offer, sender }) => {
-      try {
-        if (pc.signalingState !== 'stable') return; // prevent conflict
-        senderSocketId = sender;
+    socket.on('offer', async ({ offer, sender }) => {
+      senderSocketId = sender;
+      await pc.setRemoteDescription(new RTCSessionDescription(offer));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socket.emit('answer', { answer, target: sender });
+    });
 
-        await pc.setRemoteDescription(new RTCSessionDescription(offer));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        socket.emit('answer', { answer, target: sender });
-      } catch (err) {
-        console.error('Error handling offer:', err);
-      }
-    };
+    socket.on('ice-candidate', (candidate) => {
+      pc.addIceCandidate(new RTCIceCandidate(candidate));
+    });
 
-    const handleIceCandidate = (candidate) => {
-      try {
-        if (candidate && pc.remoteDescription) {
-          pc.addIceCandidate(new RTCIceCandidate(candidate));
-        }
-      } catch (err) {
-        console.error('Error adding ICE candidate:', err);
-      }
-    };
-
-    socket.on('offer', handleOffer);
-    socket.on('ice-candidate', handleIceCandidate);
-
-    return () => {
-      if (pc) pc.close();
-      socket.off('offer', handleOffer);
-      socket.off('ice-candidate', handleIceCandidate);
-    };
+    return () => pc.close();
   }, []);
 
   return (
