@@ -14,9 +14,7 @@ export function Sender() {
 
   useEffect(() => {
     socket.emit('create-room');
-    socket.on('room-created', (id) => {
-      setRoomId(id);
-    });
+    socket.on('room-created', (id) => setRoomId(id));
   }, []);
 
   useEffect(() => {
@@ -26,7 +24,7 @@ export function Sender() {
 
     socket.on('viewer-joined', async (viewerSocketId) => {
       const pc = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
       });
 
       pc.onicecandidate = (e) => {
@@ -45,26 +43,20 @@ export function Sender() {
       canvas.width = video.videoWidth || 640;
       canvas.height = video.videoHeight || 360;
       const ctx = canvas.getContext('2d');
-
       function draw() {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         requestAnimationFrame(draw);
       }
       draw();
 
-      const canvasStream = canvas.captureStream(30);
+      const videoStream = canvas.captureStream(30);
+      const audioTracks = video.captureStream().getAudioTracks();
 
-      // ✅ Clone audio track per viewer
-      const audioTrack = video.captureStream().getAudioTracks()[0];
-      if (audioTrack) {
-        const clonedAudioTrack = audioTrack.clone();
-        canvasStream.addTrack(clonedAudioTrack);
-      }
+      const fullStream = new MediaStream();
+      videoStream.getVideoTracks().forEach(track => fullStream.addTrack(track));
+      audioTracks.forEach(track => fullStream.addTrack(track.clone()));
 
-      // Add cloned tracks to peer connection
-      canvasStream.getTracks().forEach((track) => {
-        pc.addTrack(track, canvasStream);
-      });
+      fullStream.getTracks().forEach(track => pc.addTrack(track, fullStream));
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
@@ -88,11 +80,8 @@ export function Sender() {
       }
     });
 
-    // Sync play/pause
     const video = videoRef.current;
-    const emitPlayPause = (type) => {
-      socket.emit('sync-control', { type });
-    };
+    const emitPlayPause = (type) => socket.emit('sync-control', { type });
 
     video.addEventListener('play', () => emitPlayPause('play'));
     video.addEventListener('pause', () => emitPlayPause('pause'));
@@ -106,10 +95,7 @@ export function Sender() {
 
   const handleFileChange = (e) => {
     const file = e.target.files[0];
-    if (file) {
-      const url = URL.createObjectURL(file);
-      setVideoFile(url);
-    }
+    if (file) setVideoFile(URL.createObjectURL(file));
   };
 
   const handleCopy = () => {
@@ -124,88 +110,33 @@ export function Sender() {
   const shareLink = roomId ? `${window.location.origin}?roomId=${roomId}` : '';
 
   return (
-    <motion.div
-      className="min-h-screen bg-gray-100 flex items-center justify-center p-6"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-    >
-      <motion.div
-        className="w-full max-w-3xl bg-white rounded-2xl shadow-xl p-6 space-y-6"
-        initial={{ y: 50, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ delay: 0.2 }}
-      >
-        <h2 className="text-2xl font-bold text-center text-gray-800">
-          🎥 Video Broadcast (Sender)
-        </h2>
-
+    <motion.div className="min-h-screen bg-gray-100 flex items-center justify-center p-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+      <motion.div className="w-full max-w-3xl bg-white rounded-2xl shadow-xl p-6 space-y-6" initial={{ y: 50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.2 }}>
+        <h2 className="text-2xl font-bold text-center text-gray-800">🎥 Video Broadcast (Sender)</h2>
         <div className="flex flex-col items-center gap-4">
-          <input
-            type="file"
-            accept="video/*"
-            onChange={handleFileChange}
-            className="file:px-4 file:py-2 file:border-0 file:rounded-lg file:bg-blue-600 file:text-white hover:file:bg-blue-700 transition-all"
-          />
-
+          <input type="file" accept="video/*" onChange={handleFileChange} className="file:px-4 file:py-2 file:border-0 file:rounded-lg file:bg-blue-600 file:text-white hover:file:bg-blue-700 transition-all" />
           {videoFile && (
             <div className="flex flex-col items-center gap-4 w-full">
-              <motion.video
-                ref={videoRef}
-                src={videoFile}
-                controls
-                className="w-full max-w-2xl rounded-lg shadow-md"
-                initial={{ scale: 0.95, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                transition={{ delay: 0.3 }}
-              />
-
+              <motion.video ref={videoRef} src={videoFile} controls className="w-full max-w-2xl rounded-lg shadow-md" initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ delay: 0.3 }} />
               {!startBroadcast && (
-                <motion.button
-                  onClick={() => setStartBroadcast(true)}
-                  className="px-6 py-2 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition"
-                  whileTap={{ scale: 0.95 }}
-                >
+                <motion.button onClick={() => setStartBroadcast(true)} className="px-6 py-2 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition" whileTap={{ scale: 0.95 }}>
                   Start Broadcast
                 </motion.button>
               )}
             </div>
           )}
-
           {roomId && (
-            <motion.div
-              className="mt-6 w-full text-center space-y-3"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.5 }}
-            >
+            <motion.div className="mt-6 w-full text-center space-y-3" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}>
               <p className="text-gray-700">Viewer Link:</p>
               <p className="text-blue-600 break-all">{shareLink}</p>
-
               <div className="flex justify-center gap-4 mt-2 flex-wrap">
-                <motion.button
-                  onClick={handleCopy}
-                  className="flex items-center gap-2 px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900"
-                  whileTap={{ scale: 0.95 }}
-                >
-                  <FaCopy />
-                  {copied ? 'Copied!' : 'Copy Link'}
+                <motion.button onClick={handleCopy} className="flex items-center gap-2 px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900" whileTap={{ scale: 0.95 }}>
+                  <FaCopy />{copied ? 'Copied!' : 'Copy Link'}
                 </motion.button>
-
-                <a
-                  href={`https://wa.me/?text=${encodeURIComponent(shareLink)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600"
-                >
+                <a href={`https://wa.me/?text=${encodeURIComponent(shareLink)}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600">
                   <FaWhatsapp /> WhatsApp
                 </a>
-
-                <a
-                  href={`https://www.instagram.com/?url=${encodeURIComponent(shareLink)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2 px-4 py-2 bg-pink-500 text-white rounded-lg hover:bg-pink-600"
-                >
+                <a href={`https://www.instagram.com/?url=${encodeURIComponent(shareLink)}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-4 py-2 bg-pink-500 text-white rounded-lg hover:bg-pink-600">
                   <FaInstagram /> Instagram
                 </a>
               </div>
