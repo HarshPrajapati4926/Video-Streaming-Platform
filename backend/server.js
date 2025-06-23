@@ -14,23 +14,29 @@ const io = socketIo(server, {
   },
 });
 
-const sessions = {};
+const rooms = {}; // { roomId: { sender, viewers[] } }
 
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
 
   socket.on('create-room', () => {
     const roomId = uuidv4();
-    sessions[roomId] = socket.id;
+    rooms[roomId] = {
+      sender: socket.id,
+      viewers: []
+    };
     socket.emit('room-created', roomId);
     console.log(`Room created: ${roomId}`);
   });
 
   socket.on('join-room', (roomId) => {
-    const senderSocketId = sessions[roomId];
-    if (senderSocketId) {
-      socket.to(senderSocketId).emit('viewer-joined', socket.id);
+    const room = rooms[roomId];
+    if (room && room.sender) {
+      room.viewers.push(socket.id);
+      io.to(room.sender).emit('viewer-joined', socket.id);
       console.log(`Viewer ${socket.id} joined room ${roomId}`);
+    } else {
+      socket.emit('error', 'Room not found or sender not connected.');
     }
   });
 
@@ -47,16 +53,30 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    console.log('Client disconnected:', socket.id);
-    for (const roomId in sessions) {
-      if (sessions[roomId] === socket.id) {
-        delete sessions[roomId];
+    console.log('Disconnected:', socket.id);
+    for (const roomId in rooms) {
+      const room = rooms[roomId];
+
+      if (room.sender === socket.id) {
+        // Notify all viewers and delete the room
+        room.viewers.forEach((viewerId) => {
+          io.to(viewerId).emit('sender-disconnected');
+        });
+        delete rooms[roomId];
+        console.log(`Room ${roomId} closed (sender disconnected)`);
+      } else {
+        // Remove from viewers if exists
+        room.viewers = room.viewers.filter(id => id !== socket.id);
       }
     }
   });
 });
 
+app.get('/', (req, res) => {
+  res.send('✅ WebRTC signaling server is running.');
+});
+
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ Server is running on port ${PORT}`);
+  console.log(`✅ Server is live on port ${PORT}`);
 });
