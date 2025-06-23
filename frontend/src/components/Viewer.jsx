@@ -8,67 +8,73 @@ const socket = io('https://video-streaming-platform-bf1p.onrender.com');
 export function Viewer() {
   const videoRef = useRef(null);
   const pcRef = useRef(null);
+  const senderRef = useRef(null);
 
   useEffect(() => {
     const roomId = new URLSearchParams(window.location.search).get('roomId');
-    if (!roomId) return;
+    if (!roomId) {
+      console.error("No roomId in URL");
+      return;
+    }
 
     const pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        // Add TURN here if needed:
+        // { urls: 'turn:your-turn-server-url', username: 'user', credential: 'pass' }
+      ],
     });
     pcRef.current = pc;
 
-    let senderSocketId = null;
-
     pc.ontrack = (event) => {
-      const incomingStream = event.streams[0];
-      if (videoRef.current && videoRef.current.srcObject !== incomingStream) {
-        videoRef.current.srcObject = incomingStream;
+      const stream = event.streams[0];
+      if (videoRef.current && videoRef.current.srcObject !== stream) {
+        videoRef.current.srcObject = stream;
       }
     };
 
     pc.onicecandidate = (e) => {
-      if (e.candidate && senderSocketId) {
+      if (e.candidate && senderRef.current) {
         socket.emit('ice-candidate', {
           candidate: e.candidate,
-          target: senderSocketId,
+          target: senderRef.current,
         });
       }
     };
 
-    socket.emit('join-room', roomId);
-
     const handleOffer = async ({ offer, sender }) => {
       try {
-        if (pc.signalingState !== 'stable') return; // prevent conflict
-        senderSocketId = sender;
-
+        senderRef.current = sender;
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
+
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
+
         socket.emit('answer', { answer, target: sender });
-      } catch (err) {
-        console.error('Error handling offer:', err);
+      } catch (e) {
+        console.error("Error handling offer:", e);
       }
     };
 
-    const handleIceCandidate = (candidate) => {
+    const handleIce = ({ candidate, sender }) => {
       try {
-        if (candidate && pc.remoteDescription) {
-          pc.addIceCandidate(new RTCIceCandidate(candidate));
+        if (candidate && pcRef.current.remoteDescription) {
+          pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
         }
-      } catch (err) {
-        console.error('Error adding ICE candidate:', err);
+      } catch (e) {
+        console.error("Error adding ICE:", e);
       }
     };
 
     socket.on('offer', handleOffer);
-    socket.on('ice-candidate', handleIceCandidate);
+    socket.on('ice-candidate', handleIce);
+
+    socket.emit('join-room', roomId);
 
     return () => {
-      if (pc) pc.close();
+      pc.close();
       socket.off('offer', handleOffer);
-      socket.off('ice-candidate', handleIceCandidate);
+      socket.off('ice-candidate', handleIce);
     };
   }, []);
 
@@ -97,7 +103,6 @@ export function Viewer() {
         autoPlay
         playsInline
         controls
-        onLoadedMetadata={() => (videoRef.current.volume = 1)}
         className="w-full max-w-3xl rounded-2xl shadow-lg border border-gray-300"
       />
     </motion.div>
