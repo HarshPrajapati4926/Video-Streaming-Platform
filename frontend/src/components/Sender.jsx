@@ -26,7 +26,7 @@ export function Sender() {
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
       });
 
-      pc.onicecandidate = e => {
+      pc.onicecandidate = (e) => {
         if (e.candidate) {
           socket.emit('ice-candidate', { candidate: e.candidate, target: viewerSocketId });
         }
@@ -35,32 +35,9 @@ export function Sender() {
       const video = videoRef.current;
       await video.play();
 
-      const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth || 640;
-      canvas.height = video.videoHeight || 360;
-      const ctx = canvas.getContext('2d');
+      const stream = video.captureStream(); // ⬅️ Captures video + its audio
 
-      function draw() {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        requestAnimationFrame(draw);
-      }
-      draw();
-
-      const canvasStream = canvas.captureStream(30);
-
-      let audioStream = null;
-      try {
-        audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      } catch (err) {
-        console.error('Microphone access denied:', err);
-      }
-
-      const combinedStream = new MediaStream([
-        ...canvasStream.getVideoTracks(),
-        ...(audioStream ? audioStream.getAudioTracks() : [])
-      ]);
-
-      combinedStream.getTracks().forEach(track => pc.addTrack(track, combinedStream));
+      stream.getTracks().forEach(track => pc.addTrack(track, stream));
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
