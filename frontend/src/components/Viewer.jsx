@@ -17,17 +17,10 @@ export function Viewer() {
     let senderSocketId = null;
 
     pc.ontrack = (event) => {
-      const stream = event.streams[0];
-      const video = videoRef.current;
-
-      video.srcObject = stream;
-      video.onloadedmetadata = () => {
-        video.muted = false;
-        video.volume = 1.0;
-        video.play().catch((e) => {
-          console.warn("Autoplay failed:", e);
-        });
-      };
+      const incomingStream = event.streams[0];
+      if (videoRef.current.srcObject !== incomingStream) {
+        videoRef.current.srcObject = incomingStream;
+      }
     };
 
     pc.onicecandidate = (e) => {
@@ -63,7 +56,8 @@ export function Viewer() {
         ref={videoRef}
         autoPlay
         playsInline
-        muted={false}
+        controls
+        onLoadedMetadata={() => (videoRef.current.volume = 1)}
         className="w-full max-w-3xl rounded shadow"
       />
     </div>
