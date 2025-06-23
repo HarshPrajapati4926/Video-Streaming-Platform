@@ -14,53 +14,65 @@ const io = socketIo(server, {
   },
 });
 
-const sessions = {}; // { roomId: senderSocketId }
+const rooms = {};
 
 io.on('connection', (socket) => {
-  console.log('🔌 Client connected:', socket.id);
+  console.log('Client connected:', socket.id);
 
-  // Create a new room and register sender
   socket.on('create-room', () => {
     const roomId = uuidv4();
-    sessions[roomId] = socket.id;
+    rooms[roomId] = {
+      sender: socket.id,
+      viewers: []
+    };
     socket.emit('room-created', roomId);
-    console.log(`📡 Room created: ${roomId} by ${socket.id}`);
+    console.log(`Room created: ${roomId}`);
   });
 
-  // Viewer joins a room; inform the sender
   socket.on('join-room', (roomId) => {
-    const senderSocketId = sessions[roomId];
-    if (senderSocketId) {
-      socket.to(senderSocketId).emit('viewer-joined', socket.id);
-      console.log(`👁️ Viewer ${socket.id} joined room ${roomId}`);
+    const room = rooms[roomId];
+    if (room && room.sender) {
+      room.viewers.push(socket.id);
+      io.to(room.sender).emit('viewer-joined', socket.id);
+      console.log(`Viewer ${socket.id} joined room ${roomId}`);
     } else {
-      console.warn(`⚠️ Room not found for ID: ${roomId}`);
+      socket.emit('error', 'Room not found or sender not available.');
     }
   });
 
-  // Signaling messages
   socket.on('offer', ({ offer, target }) => {
     io.to(target).emit('offer', { offer, sender: socket.id });
   });
 
   socket.on('answer', ({ answer, target }) => {
-    io.to(target).emit('answer', { answer, from: socket.id });
+    io.to(target).emit('answer', answer);
   });
 
   socket.on('ice-candidate', ({ candidate, target }) => {
-    io.to(target).emit('ice-candidate', { candidate, from: socket.id });
+    io.to(target).emit('ice-candidate', candidate);
   });
 
-  // Clean up when client disconnects
   socket.on('disconnect', () => {
-    console.log('❌ Client disconnected:', socket.id);
-    for (const roomId in sessions) {
-      if (sessions[roomId] === socket.id) {
-        console.log(`🧹 Cleaning up room: ${roomId}`);
-        delete sessions[roomId];
+    console.log('Client disconnected:', socket.id);
+    for (const roomId in rooms) {
+      const room = rooms[roomId];
+      if (room.sender === socket.id) {
+        // Notify all viewers that sender is gone
+        room.viewers.forEach((viewerId) => {
+          io.to(viewerId).emit('sender-disconnected');
+        });
+        delete rooms[roomId];
+        console.log(`Room ${roomId} deleted`);
+      } else {
+        // Remove viewer from room if present
+        room.viewers = room.viewers.filter((id) => id !== socket.id);
       }
     }
   });
+});
+
+app.get('/', (req, res) => {
+  res.send('🔁 WebRTC Signaling Server is running.');
 });
 
 const PORT = process.env.PORT || 3000;
