@@ -14,29 +14,23 @@ const io = socketIo(server, {
   },
 });
 
-const rooms = {};
+const sessions = {};
 
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
 
   socket.on('create-room', () => {
     const roomId = uuidv4();
-    rooms[roomId] = {
-      sender: socket.id,
-      viewers: []
-    };
+    sessions[roomId] = socket.id;
     socket.emit('room-created', roomId);
     console.log(`Room created: ${roomId}`);
   });
 
   socket.on('join-room', (roomId) => {
-    const room = rooms[roomId];
-    if (room && room.sender) {
-      room.viewers.push(socket.id);
-      io.to(room.sender).emit('viewer-joined', socket.id);
+    const senderSocketId = sessions[roomId];
+    if (senderSocketId) {
+      socket.to(senderSocketId).emit('viewer-joined', socket.id);
       console.log(`Viewer ${socket.id} joined room ${roomId}`);
-    } else {
-      socket.emit('error', 'Room not found or sender not available.');
     }
   });
 
@@ -54,25 +48,12 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
-    for (const roomId in rooms) {
-      const room = rooms[roomId];
-      if (room.sender === socket.id) {
-        // Notify all viewers that sender is gone
-        room.viewers.forEach((viewerId) => {
-          io.to(viewerId).emit('sender-disconnected');
-        });
-        delete rooms[roomId];
-        console.log(`Room ${roomId} deleted`);
-      } else {
-        // Remove viewer from room if present
-        room.viewers = room.viewers.filter((id) => id !== socket.id);
+    for (const roomId in sessions) {
+      if (sessions[roomId] === socket.id) {
+        delete sessions[roomId];
       }
     }
   });
-});
-
-app.get('/', (req, res) => {
-  res.send('🔁 WebRTC Signaling Server is running.');
 });
 
 const PORT = process.env.PORT || 3000;
