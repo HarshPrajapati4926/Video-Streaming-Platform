@@ -18,7 +18,14 @@ export function Viewer() {
     let senderSocketId = null;
 
     pc.ontrack = (event) => {
-      videoRef.current.srcObject = event.streams[0];
+      const [remoteStream] = event.streams;
+      if (videoRef.current) {
+        videoRef.current.srcObject = remoteStream;
+        videoRef.current.volume = 1.0;
+        videoRef.current
+          .play()
+          .catch((err) => console.warn('Autoplay prevented:', err));
+      }
     };
 
     pc.onicecandidate = (e) => {
@@ -77,6 +84,7 @@ export function Viewer() {
           autoPlay
           playsInline
           controls
+          muted={false}
           className="w-full rounded-lg shadow-md"
           initial={{ scale: 0.95, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
