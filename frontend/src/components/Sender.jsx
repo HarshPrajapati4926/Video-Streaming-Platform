@@ -19,20 +19,23 @@ export function Sender() {
   const [startBroadcast, setStartBroadcast] = useState(false);
   const [roomId, setRoomId] = useState(null);
   const [copied, setCopied] = useState(false);
+  const pcMap = useRef(new Map());
 
   useEffect(() => {
     socket.emit('create-room');
     socket.on('room-created', (id) => {
       setRoomId(id);
     });
+
+    return () => {
+      socket.off('room-created');
+    };
   }, []);
 
   useEffect(() => {
     if (!videoFile || !startBroadcast || !roomId) return;
 
-    const pcMap = new Map();
-
-    socket.on('viewer-joined', async (viewerSocketId) => {
+    const handleViewerJoined = async (viewerSocketId) => {
       const pc = new RTCPeerConnection({
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
       });
@@ -56,29 +59,34 @@ export function Sender() {
       await pc.setLocalDescription(offer);
       socket.emit('offer', { offer, target: viewerSocketId });
 
-      pcMap.set(viewerSocketId, pc);
-    });
+      pcMap.current.set(viewerSocketId, pc);
+    };
 
-    socket.on('answer', (answer) => {
-      for (const pc of pcMap.values()) {
-        if (pc.signalingState !== 'stable') {
-          pc.setRemoteDescription(new RTCSessionDescription(answer));
-          break;
-        }
+    const handleAnswer = ({ answer, sender }) => {
+      const pc = pcMap.current.get(sender);
+      if (pc && pc.signalingState !== 'stable') {
+        pc.setRemoteDescription(new RTCSessionDescription(answer));
       }
-    });
+    };
 
-    socket.on('ice-candidate', (candidate) => {
-      for (const pc of pcMap.values()) {
+    const handleIceCandidate = ({ candidate, sender }) => {
+      const pc = pcMap.current.get(sender);
+      if (pc && candidate) {
         pc.addIceCandidate(new RTCIceCandidate(candidate));
       }
-    });
+    };
+
+    socket.on('viewer-joined', handleViewerJoined);
+    socket.on('answer', handleAnswer);
+    socket.on('ice-candidate', handleIceCandidate);
 
     return () => {
-      pcMap.forEach((pc) => pc.close());
-      socket.off('viewer-joined');
-      socket.off('answer');
-      socket.off('ice-candidate');
+      pcMap.current.forEach((pc) => pc.close());
+      pcMap.current.clear();
+
+      socket.off('viewer-joined', handleViewerJoined);
+      socket.off('answer', handleAnswer);
+      socket.off('ice-candidate', handleIceCandidate);
     };
   }, [videoFile, startBroadcast, roomId]);
 
