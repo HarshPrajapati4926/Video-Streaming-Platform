@@ -14,7 +14,7 @@ const io = socketIo(server, {
   },
 });
 
-const rooms = {}; // roomId: { sender, viewers: [] }
+const rooms = {}; // roomId: { sender, viewers: Set }
 
 io.on('connection', (socket) => {
   console.log('🔌 Client connected:', socket.id);
@@ -23,7 +23,7 @@ io.on('connection', (socket) => {
     const roomId = uuidv4();
     rooms[roomId] = {
       sender: socket.id,
-      viewers: [],
+      viewers: new Set(),
     };
     socket.emit('room-created', roomId);
     console.log(`📺 Room created: ${roomId}`);
@@ -32,7 +32,7 @@ io.on('connection', (socket) => {
   socket.on('join-room', (roomId) => {
     const room = rooms[roomId];
     if (room && room.sender) {
-      room.viewers.push(socket.id);
+      room.viewers.add(socket.id);
       io.to(room.sender).emit('viewer-joined', socket.id);
       console.log(`👀 Viewer ${socket.id} joined room ${roomId}`);
     } else {
@@ -54,19 +54,27 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     console.log('❌ Disconnected:', socket.id);
+
     for (const roomId in rooms) {
       const room = rooms[roomId];
 
+      // If sender disconnected
       if (room.sender === socket.id) {
-        // Notify all viewers that the sender is gone
         room.viewers.forEach((viewerId) => {
           io.to(viewerId).emit('sender-disconnected');
         });
         delete rooms[roomId];
         console.log(`🚫 Room ${roomId} closed (sender disconnected)`);
-      } else {
-        // Remove viewer if present
-        room.viewers = room.viewers.filter((id) => id !== socket.id);
+
+      // If viewer disconnected
+      } else if (room.viewers.has(socket.id)) {
+        room.viewers.delete(socket.id);
+        console.log(`👋 Viewer ${socket.id} left room ${roomId}`);
+
+        // Clean up if no viewers left
+        if (room.viewers.size === 0) {
+          console.log(`🧹 Room ${roomId} has no viewers`);
+        }
       }
     }
   });
