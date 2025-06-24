@@ -14,6 +14,7 @@ export default function App() {
   const [copied, setCopied] = useState(false);
   const videoRef = useRef(null);
   const viewerVideoRef = useRef(null);
+  const pcMap = useRef(new Map());
 
   useEffect(() => {
     const queryRoomId = new URLSearchParams(window.location.search).get('roomId');
@@ -31,8 +32,6 @@ export default function App() {
 
   useEffect(() => {
     if (!videoFile || !startBroadcast || !roomId || role !== 'sender') return;
-
-    const pcMap = new Map();
 
     socket.on('viewer-joined', async (viewerSocketId) => {
       const pc = new RTCPeerConnection({
@@ -75,21 +74,28 @@ export default function App() {
       await pc.setLocalDescription(offer);
       socket.emit('offer', { offer, target: viewerSocketId });
 
-      pcMap.set(viewerSocketId, pc);
+      pcMap.current.set(viewerSocketId, pc);
     });
 
-    socket.on('answer', (answer) => {
-      for (const pc of pcMap.values()) {
-        if (pc.signalingState !== 'stable') {
-          pc.setRemoteDescription(new RTCSessionDescription(answer));
-          break;
-        }
+    socket.on('answer', ({ answer, sender }) => {
+      const pc = pcMap.current.get(sender);
+      if (pc && pc.signalingState !== 'closed') {
+        pc.setRemoteDescription(new RTCSessionDescription(answer));
       }
     });
 
-    socket.on('ice-candidate', (candidate) => {
-      for (const pc of pcMap.values()) {
+    socket.on('ice-candidate', ({ candidate, sender }) => {
+      const pc = pcMap.current.get(sender);
+      if (pc && pc.signalingState !== 'closed') {
         pc.addIceCandidate(new RTCIceCandidate(candidate));
+      }
+    });
+
+    socket.on('viewer-left', (viewerSocketId) => {
+      const pc = pcMap.current.get(viewerSocketId);
+      if (pc) {
+        pc.close();
+        pcMap.current.delete(viewerSocketId);
       }
     });
 
@@ -100,7 +106,7 @@ export default function App() {
     video.addEventListener('pause', () => emitPlayPause('pause'));
 
     return () => {
-      pcMap.forEach((pc) => pc.close());
+      pcMap.current.forEach((pc) => pc.close());
       video.removeEventListener('play', () => emitPlayPause('play'));
       video.removeEventListener('pause', () => emitPlayPause('pause'));
     };
@@ -146,8 +152,10 @@ export default function App() {
       socket.emit('answer', { answer, target: sender });
     });
 
-    socket.on('ice-candidate', (candidate) => {
-      pc.addIceCandidate(new RTCIceCandidate(candidate));
+    socket.on('ice-candidate', ({ candidate }) => {
+      if (pc.signalingState !== 'closed') {
+        pc.addIceCandidate(new RTCIceCandidate(candidate));
+      }
     });
 
     socket.on('sync-control', ({ type }) => {
