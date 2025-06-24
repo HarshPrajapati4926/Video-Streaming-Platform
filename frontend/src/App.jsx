@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import { FaVideo, FaCopy, FaWhatsapp, FaInstagram } from 'react-icons/fa';
 import './App.css';
 
-const socket = io('http://localhost:3000');
+const socket = io('https://video-streaming-platform-bf1p.onrender.com');
 
 export default function App() {
   const [role, setRole] = useState(null);
