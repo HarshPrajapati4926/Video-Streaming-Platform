@@ -22,9 +22,7 @@ export function Viewer() {
       if (videoRef.current) {
         videoRef.current.srcObject = remoteStream;
         videoRef.current.volume = 1.0;
-        videoRef.current
-          .play()
-          .catch((err) => console.warn('Autoplay prevented:', err));
+        videoRef.current.play().catch((err) => console.warn('Autoplay prevented:', err));
       }
     };
 
@@ -67,17 +65,8 @@ export function Viewer() {
   }, []);
 
   return (
-    <motion.div
-      className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-    >
-      <motion.div
-        className="w-full max-w-3xl bg-white rounded-2xl shadow-xl p-6"
-        initial={{ y: 30, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ delay: 0.2 }}
-      >
+    <motion.div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+      <motion.div className="w-full max-w-3xl bg-white rounded-2xl shadow-xl p-6" initial={{ y: 30, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.2 }}>
         <h2 className="text-xl font-semibold mb-4 text-center text-gray-800">👁️ Viewer</h2>
         <motion.video
           ref={videoRef}
