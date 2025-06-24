@@ -8,35 +8,31 @@ export function Viewer() {
   const videoRef = useRef(null);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const roomId = params.get('roomId');
-    console.log('Viewer page loaded with roomId:', roomId);
-    if (!roomId) {
-      console.error('No roomId found in URL');
-      return;
-    }
+    const roomId = new URLSearchParams(window.location.search).get('roomId');
+    if (!roomId) return;
 
     const pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     });
-    let senderId = null;
+
+    let senderSocketId = null;
 
     pc.ontrack = (event) => {
-      const [stream] = event.streams;
-      if (videoRef.current && stream) {
-        videoRef.current.srcObject = stream;
+      const [remoteStream] = event.streams;
+      if (videoRef.current) {
+        videoRef.current.srcObject = remoteStream;
         videoRef.current.volume = 1.0;
-        videoRef.current.play().catch((err) =>
-          console.warn('Autoplay prevented:', err)
-        );
+        videoRef.current
+          .play()
+          .catch((err) => console.warn('Autoplay prevented:', err));
       }
     };
 
-    pc.onicecandidate = (evt) => {
-      if (evt.candidate && senderId) {
+    pc.onicecandidate = (e) => {
+      if (e.candidate && senderSocketId) {
         socket.emit('ice-candidate', {
-          candidate: evt.candidate,
-          target: senderId,
+          candidate: e.candidate,
+          target: senderSocketId
         });
       }
     };
@@ -44,8 +40,7 @@ export function Viewer() {
     socket.emit('join-room', roomId);
 
     socket.on('offer', async ({ offer, sender }) => {
-      senderId = sender;
-      console.log('Received offer from sender:', sender);
+      senderSocketId = sender;
       await pc.setRemoteDescription(new RTCSessionDescription(offer));
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
@@ -53,24 +48,22 @@ export function Viewer() {
     });
 
     socket.on('ice-candidate', (candidate) => {
-      pc.addIceCandidate(new RTCIceCandidate(candidate)).catch((err) =>
-        console.error('Failed to add ICE candidate:', err)
-      );
+      pc.addIceCandidate(new RTCIceCandidate(candidate));
     });
 
+    // Sync playback controls
     socket.on('sync-control', ({ type }) => {
-      if (videoRef.current) {
-        if (type === 'play') videoRef.current.play().catch(console.warn);
-        if (type === 'pause') videoRef.current.pause();
+      const video = videoRef.current;
+      if (!video) return;
+
+      if (type === 'play') {
+        video.play();
+      } else if (type === 'pause') {
+        video.pause();
       }
     });
 
-    return () => {
-      pc.close();
-      socket.off('offer');
-      socket.off('ice-candidate');
-      socket.off('sync-control');
-    };
+    return () => pc.close();
   }, []);
 
   return (
@@ -85,9 +78,7 @@ export function Viewer() {
         animate={{ y: 0, opacity: 1 }}
         transition={{ delay: 0.2 }}
       >
-        <h2 className="text-xl font-semibold mb-4 text-center text-gray-800">
-          👁️ Viewer
-        </h2>
+        <h2 className="text-xl font-semibold mb-4 text-center text-gray-800">👁️ Viewer</h2>
         <motion.video
           ref={videoRef}
           autoPlay
