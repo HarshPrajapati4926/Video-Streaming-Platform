@@ -1,32 +1,180 @@
-import React, { useState, useEffect } from 'react';
-import { Sender } from './components/Sender';
-import { Viewer } from './components/Viewer';
+import React, { useEffect, useRef, useState } from 'react';
+import { io } from 'socket.io-client';
 import { motion } from 'framer-motion';
-import { FaVideo, FaUserAlt } from 'react-icons/fa';
+import { FaCopy, FaWhatsapp, FaInstagram, FaVideo } from 'react-icons/fa';
 import './App.css';
 
+const socket = io('https://video-streaming-platform-bf1p.onrender.com');
+
 export default function App() {
+  const videoRef = useRef(null);
   const [role, setRole] = useState(null);
+  const [roomId, setRoomId] = useState(null);
+  const [videoFile, setVideoFile] = useState(null);
+  const [startBroadcast, setStartBroadcast] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [isViewer, setIsViewer] = useState(false);
 
   useEffect(() => {
-    const roomId = new URLSearchParams(window.location.search).get('roomId');
-    if (roomId) {
+    const paramRoomId = new URLSearchParams(window.location.search).get('roomId');
+    if (paramRoomId) {
+      setRoomId(paramRoomId);
+      setIsViewer(true);
       setRole('viewer');
     }
   }, []);
 
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-100 via-white to-purple-100 px-4">
-      {!role ? (
+  useEffect(() => {
+    if (!role && !roomId) {
+      socket.emit('create-room');
+      socket.on('room-created', (id) => {
+        setRoomId(id);
+      });
+    }
+  }, [role, roomId]);
+
+  useEffect(() => {
+    if (role !== 'viewer' || !roomId) return;
+
+    const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+    let senderSocketId = null;
+
+    pc.ontrack = (event) => {
+      const [remoteStream] = event.streams;
+      if (videoRef.current) {
+        videoRef.current.srcObject = remoteStream;
+        videoRef.current.play().catch(console.warn);
+      }
+    };
+
+    pc.onicecandidate = (e) => {
+      if (e.candidate && senderSocketId) {
+        socket.emit('ice-candidate', {
+          candidate: e.candidate,
+          target: senderSocketId
+        });
+      }
+    };
+
+    socket.emit('join-room', roomId);
+
+    socket.on('offer', async ({ offer, sender }) => {
+      senderSocketId = sender;
+      await pc.setRemoteDescription(new RTCSessionDescription(offer));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socket.emit('answer', { answer, target: sender });
+    });
+
+    socket.on('ice-candidate', (candidate) => {
+      pc.addIceCandidate(new RTCIceCandidate(candidate));
+    });
+
+    socket.on('sync-control', ({ type }) => {
+      const video = videoRef.current;
+      if (type === 'play') video.play();
+      if (type === 'pause') video.pause();
+    });
+
+    return () => pc.close();
+  }, [role, roomId]);
+
+  useEffect(() => {
+    if (role !== 'sender' || !startBroadcast || !videoFile || !roomId) return;
+
+    const pcMap = new Map();
+
+    socket.on('viewer-joined', async (viewerSocketId) => {
+      const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+
+      pc.onicecandidate = (e) => {
+        if (e.candidate) {
+          socket.emit('ice-candidate', {
+            candidate: e.candidate,
+            target: viewerSocketId,
+          });
+        }
+      };
+
+      const video = videoRef.current;
+      await video.play();
+
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 360;
+      const ctx = canvas.getContext('2d');
+      function draw() {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        requestAnimationFrame(draw);
+      }
+      draw();
+
+      const videoStream = canvas.captureStream(30);
+      const audioTracks = video.captureStream().getAudioTracks();
+      const fullStream = new MediaStream();
+
+      videoStream.getVideoTracks().forEach((track) => fullStream.addTrack(track));
+      audioTracks.forEach((track) => fullStream.addTrack(track.clone()));
+      fullStream.getTracks().forEach((track) => pc.addTrack(track, fullStream));
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket.emit('offer', { offer, target: viewerSocketId });
+
+      pcMap.set(viewerSocketId, pc);
+    });
+
+    socket.on('answer', (answer) => {
+      for (const pc of pcMap.values()) {
+        if (pc.signalingState !== 'stable') {
+          pc.setRemoteDescription(new RTCSessionDescription(answer));
+          break;
+        }
+      }
+    });
+
+    socket.on('ice-candidate', (candidate) => {
+      for (const pc of pcMap.values()) {
+        pc.addIceCandidate(new RTCIceCandidate(candidate));
+      }
+    });
+
+    const video = videoRef.current;
+    const emitControl = (type) => socket.emit('sync-control', { type });
+    video.addEventListener('play', () => emitControl('play'));
+    video.addEventListener('pause', () => emitControl('pause'));
+
+    return () => {
+      pcMap.forEach((pc) => pc.close());
+    };
+  }, [role, startBroadcast, videoFile, roomId]);
+
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (file) setVideoFile(URL.createObjectURL(file));
+  };
+
+  const handleCopy = () => {
+    if (!roomId) return;
+    const link = `${window.location.origin}?roomId=${roomId}`;
+    navigator.clipboard.writeText(link).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  const viewerLink = `${window.location.origin}?roomId=${roomId}`;
+
+  if (!role) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-100 via-white to-purple-100 px-4">
         <motion.div
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, ease: 'easeOut' }}
+          transition={{ duration: 0.6 }}
           className="bg-white shadow-xl rounded-2xl p-8 max-w-md w-full text-center"
         >
-          <h1 className="text-3xl font-extrabold mb-6 text-gray-800">
-            Start Your Video Broadcast
-          </h1>
+          <h1 className="text-3xl font-extrabold mb-6 text-gray-800">Start Your Video Broadcast</h1>
           <div className="flex flex-col space-y-4">
             <motion.button
               whileHover={{ scale: 1.05 }}
@@ -34,22 +182,61 @@ export default function App() {
               onClick={() => setRole('sender')}
               className="flex items-center justify-center gap-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition duration-300"
             >
-              <FaVideo />
-              Sender
+              <FaVideo /> Sender
             </motion.button>
           </div>
         </motion.div>
-      ) : (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.5 }}
-          className="w-full"
-        >
-          {role === 'sender' && <Sender />}
-          {role === 'viewer' && <Viewer />}
-        </motion.div>
-      )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-100 flex items-center justify-center p-6">
+      <motion.div className="w-full max-w-3xl bg-white rounded-2xl shadow-xl p-6 space-y-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+        <h2 className="text-2xl font-bold text-center text-gray-800">
+          {role === 'viewer' ? '👁️ Viewer' : '🎥 Video Broadcast (Sender)'}
+        </h2>
+
+        <div className="flex flex-col items-center gap-4 w-full">
+          {role === 'sender' && (
+            <>
+              <input type="file" accept="video/*" onChange={handleFileChange} className="file:px-4 file:py-2 file:border-0 file:rounded-lg file:bg-blue-600 file:text-white hover:file:bg-blue-700" />
+              {videoFile && (
+                <>
+                  <video ref={videoRef} src={videoFile} controls className="w-full max-w-2xl rounded-lg shadow-md" />
+                  {!startBroadcast && (
+                    <motion.button onClick={() => setStartBroadcast(true)} className="px-6 py-2 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition" whileTap={{ scale: 0.95 }}>
+                      Start Broadcast
+                    </motion.button>
+                  )}
+                </>
+              )}
+            </>
+          )}
+
+          {role === 'viewer' && (
+            <video ref={videoRef} controls autoPlay playsInline className="w-full max-w-2xl rounded-lg shadow-md" />
+          )}
+
+          {role === 'sender' && roomId && (
+            <motion.div className="mt-6 text-center space-y-3">
+              <p className="text-gray-700">Viewer Link:</p>
+              <p className="text-blue-600 break-all">{viewerLink}</p>
+              <div className="flex justify-center gap-4 flex-wrap">
+                <motion.button onClick={handleCopy} className="flex items-center gap-2 px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900">
+                  <FaCopy /> {copied ? 'Copied!' : 'Copy Link'}
+                </motion.button>
+                <a href={`https://wa.me/?text=${encodeURIComponent(viewerLink)}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600">
+                  <FaWhatsapp /> WhatsApp
+                </a>
+                <a href={`https://www.instagram.com/?url=${encodeURIComponent(viewerLink)}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-4 py-2 bg-pink-500 text-white rounded-lg hover:bg-pink-600">
+                  <FaInstagram /> Instagram
+                </a>
+              </div>
+            </motion.div>
+          )}
+        </div>
+      </motion.div>
     </div>
   );
 }
