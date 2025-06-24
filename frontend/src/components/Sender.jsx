@@ -11,20 +11,18 @@ export function Sender() {
   const [startBroadcast, setStartBroadcast] = useState(false);
   const [roomId, setRoomId] = useState(null);
   const [copied, setCopied] = useState(false);
-  const pcMap = useRef(new Map());
 
   useEffect(() => {
     socket.emit('create-room');
-    socket.on('room-created', (id) => {
-      console.log('Room created:', id);
-      setRoomId(id);
-    });
+    socket.on('room-created', (id) => setRoomId(id));
   }, []);
 
   useEffect(() => {
     if (!videoFile || !startBroadcast || !roomId) return;
 
-    const handleViewerJoined = async (viewerSocketId) => {
+    const pcMap = new Map();
+
+    socket.on('viewer-joined', async (viewerSocketId) => {
       const pc = new RTCPeerConnection({
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
       });
@@ -45,61 +43,53 @@ export function Sender() {
       canvas.width = video.videoWidth || 640;
       canvas.height = video.videoHeight || 360;
       const ctx = canvas.getContext('2d');
-
-      function drawFrame() {
+      function draw() {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        requestAnimationFrame(drawFrame);
+        requestAnimationFrame(draw);
       }
-      drawFrame();
+      draw();
 
       const videoStream = canvas.captureStream(30);
       const audioTracks = video.captureStream().getAudioTracks();
 
       const fullStream = new MediaStream();
-      videoStream.getVideoTracks().forEach((track) => fullStream.addTrack(track));
-      audioTracks.forEach((track) => fullStream.addTrack(track.clone()));
+      videoStream.getVideoTracks().forEach(track => fullStream.addTrack(track));
+      audioTracks.forEach(track => fullStream.addTrack(track.clone()));
 
-      fullStream.getTracks().forEach((track) => pc.addTrack(track, fullStream));
+      fullStream.getTracks().forEach(track => pc.addTrack(track, fullStream));
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       socket.emit('offer', { offer, target: viewerSocketId });
 
-      pcMap.current.set(viewerSocketId, pc);
-    };
+      pcMap.set(viewerSocketId, pc);
+    });
 
-    const handleAnswer = ({ answer, sender }) => {
-      const pc = pcMap.current.get(sender);
-      if (pc && pc.signalingState !== 'stable') {
-        pc.setRemoteDescription(new RTCSessionDescription(answer));
+    socket.on('answer', (answer) => {
+      for (const pc of pcMap.values()) {
+        if (pc.signalingState !== 'stable') {
+          pc.setRemoteDescription(new RTCSessionDescription(answer));
+          break;
+        }
       }
-    };
+    });
 
-    const handleCandidate = ({ candidate, sender }) => {
-      const pc = pcMap.current.get(sender);
-      if (pc) {
-        pc.addIceCandidate(new RTCIceCandidate(candidate)).catch((err) => console.error(err));
+    socket.on('ice-candidate', (candidate) => {
+      for (const pc of pcMap.values()) {
+        pc.addIceCandidate(new RTCIceCandidate(candidate));
       }
-    };
-
-    const emitPlayPause = (type) => {
-      socket.emit('sync-control', { type });
-    };
-
-    socket.on('viewer-joined', handleViewerJoined);
-    socket.on('answer', handleAnswer);
-    socket.on('ice-candidate', handleCandidate);
+    });
 
     const video = videoRef.current;
+    const emitPlayPause = (type) => socket.emit('sync-control', { type });
+
     video.addEventListener('play', () => emitPlayPause('play'));
     video.addEventListener('pause', () => emitPlayPause('pause'));
 
     return () => {
-      socket.off('viewer-joined', handleViewerJoined);
-      socket.off('answer', handleAnswer);
-      socket.off('ice-candidate', handleCandidate);
-      pcMap.current.forEach((pc) => pc.close());
-      pcMap.current.clear();
+      pcMap.forEach((pc) => pc.close());
+      video.removeEventListener('play', () => emitPlayPause('play'));
+      video.removeEventListener('pause', () => emitPlayPause('pause'));
     };
   }, [videoFile, startBroadcast, roomId]);
 
@@ -125,9 +115,18 @@ export function Sender() {
         <h2 className="text-2xl font-bold text-center text-gray-800">🎥 Video Broadcast (Sender)</h2>
         <div className="flex flex-col items-center gap-4">
           <input type="file" accept="video/*" onChange={handleFileChange} className="file:px-4 file:py-2 file:border-0 file:rounded-lg file:bg-blue-600 file:text-white hover:file:bg-blue-700 transition-all" />
-          
+          {videoFile && (
+            <div className="flex flex-col items-center gap-4 w-full">
+              <motion.video ref={videoRef} src={videoFile} controls className="w-full max-w-2xl rounded-lg shadow-md" initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ delay: 0.3 }} />
+              {!startBroadcast && (
+                <motion.button onClick={() => setStartBroadcast(true)} className="px-6 py-2 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition" whileTap={{ scale: 0.95 }}>
+                  Start Broadcast
+                </motion.button>
+              )}
+            </div>
+          )}
           {roomId && (
-            <motion.div className="mt-6 w-full text-center space-y-3" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }}>
+            <motion.div className="mt-6 w-full text-center space-y-3" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}>
               <p className="text-gray-700">Viewer Link:</p>
               <p className="text-blue-600 break-all">{shareLink}</p>
               <div className="flex justify-center gap-4 mt-2 flex-wrap">
@@ -142,17 +141,6 @@ export function Sender() {
                 </a>
               </div>
             </motion.div>
-          )}
-
-          {videoFile && (
-            <div className="flex flex-col items-center gap-4 w-full">
-              <motion.video ref={videoRef} src={videoFile} controls className="w-full max-w-2xl rounded-lg shadow-md" initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ delay: 0.3 }} />
-              {!startBroadcast && (
-                <motion.button onClick={() => setStartBroadcast(true)} className="px-6 py-2 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700 transition" whileTap={{ scale: 0.95 }}>
-                  Start Broadcast
-                </motion.button>
-              )}
-            </div>
           )}
         </div>
       </motion.div>
