@@ -50,11 +50,18 @@ export function Sender() {
       draw();
 
       const videoStream = canvas.captureStream(30);
-      const audioTracks = video.captureStream().getAudioTracks();
+      const originalAudioTracks = video.captureStream().getAudioTracks();
 
-      const fullStream = new MediaStream();
-      videoStream.getVideoTracks().forEach(track => fullStream.addTrack(track));
-      audioTracks.forEach(track => fullStream.addTrack(track.clone()));
+      // 👇 Clone audio tracks per viewer
+      const audioStream = new MediaStream();
+      originalAudioTracks.forEach(track => {
+        audioStream.addTrack(track.clone());
+      });
+
+      const fullStream = new MediaStream([
+        ...videoStream.getVideoTracks(),
+        ...audioStream.getAudioTracks(),
+      ]);
 
       fullStream.getTracks().forEach(track => pc.addTrack(track, fullStream));
 
@@ -65,17 +72,16 @@ export function Sender() {
       pcMap.set(viewerSocketId, pc);
     });
 
-    socket.on('answer', (answer) => {
-      for (const pc of pcMap.values()) {
-        if (pc.signalingState !== 'stable') {
-          pc.setRemoteDescription(new RTCSessionDescription(answer));
-          break;
-        }
+    socket.on('answer', ({ answer, target }) => {
+      const pc = pcMap.get(target);
+      if (pc && pc.signalingState !== 'stable') {
+        pc.setRemoteDescription(new RTCSessionDescription(answer));
       }
     });
 
-    socket.on('ice-candidate', (candidate) => {
-      for (const pc of pcMap.values()) {
+    socket.on('ice-candidate', ({ candidate, target }) => {
+      const pc = pcMap.get(target);
+      if (pc) {
         pc.addIceCandidate(new RTCIceCandidate(candidate));
       }
     });
