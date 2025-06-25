@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { FaVideo, FaCopy, FaWhatsapp, FaInstagram, FaEye } from 'react-icons/fa';
 import './App.css';
 
-const socket = io('http://localhost:3000'); // Update for production
+const socket = io('https://video-streaming-platform-bf1p.onrender.com'); // Update for production
 
 export default function App() {
   const [role, setRole] = useState(null);
@@ -14,6 +14,7 @@ export default function App() {
   const [viewerCount, setViewerCount] = useState(0);
   const [copied, setCopied] = useState(false);
   const [password, setPassword] = useState('');
+  const [confirmedPassword, setConfirmedPassword] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
   const [authFailed, setAuthFailed] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
@@ -29,6 +30,7 @@ export default function App() {
     if (queryRoom) setRole('viewer');
   }, []);
 
+  // SENDER: Create room
   useEffect(() => {
     if (role === 'sender') {
       socket.emit('create-room');
@@ -36,45 +38,34 @@ export default function App() {
     }
   }, [role]);
 
+  // SENDER: Capture video stream
   useEffect(() => {
     const video = videoRef.current;
     if (!startBroadcast || !video) return;
 
-    video.onloadeddata = async () => {
+    const startStream = async () => {
       try {
         await video.play();
+        const stream = video.captureStream();
+        mediaStreamRef.current = stream;
 
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        canvas.width = video.videoWidth || 640;
-        canvas.height = video.videoHeight || 360;
-
-        const draw = () => {
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          requestAnimationFrame(draw);
-        };
-        draw();
-
-        const videoStream = canvas.captureStream();
-        const audioTracks = video.captureStream().getAudioTracks();
-
-        const combined = new MediaStream([
-          ...videoStream.getVideoTracks(),
-          ...audioTracks,
-        ]);
-
-        mediaStreamRef.current = combined;
+        if (stream.getTracks().length === 0) {
+          console.warn('⚠️ No tracks in stream.');
+        }
       } catch (err) {
-        console.error('Stream capture error:', err);
+        console.error('Failed to capture stream:', err);
       }
     };
+
+    startStream();
   }, [startBroadcast]);
 
+  // SENDER: WebRTC signaling
   useEffect(() => {
-    if (!mediaStreamRef.current || !roomId || role !== 'sender') return;
+    if (!mediaStreamRef.current || !roomId || role !== 'sender' || !confirmedPassword) return;
 
     socket.on('viewer-joined', async ({ viewerId, password: viewerPw }) => {
-      if (viewerPw !== password) {
+      if (viewerPw !== confirmedPassword) {
         socket.emit('auth-failed', viewerId);
         return;
       }
@@ -125,8 +116,9 @@ export default function App() {
       videoEl.removeEventListener('play', () => sync('play'));
       videoEl.removeEventListener('pause', () => sync('pause'));
     };
-  }, [mediaStreamRef.current, roomId, role, password]);
+  }, [mediaStreamRef.current, roomId, role, confirmedPassword]);
 
+  // VIEWER
   useEffect(() => {
     if (role !== 'viewer') return;
 
@@ -191,6 +183,7 @@ export default function App() {
 
   const handleSetPassword = () => {
     if (password.trim()) {
+      setConfirmedPassword(password);
       setShowToast('✅ Password set successfully!');
     } else {
       setShowToast('⚠️ Please enter a password first.');
@@ -233,27 +226,22 @@ export default function App() {
           <h2 className="text-2xl text-center">🎥 Sender Broadcast</h2>
           <input type="file" accept="video/*" onChange={e => setVideoFile(URL.createObjectURL(e.target.files[0]))} className="file:bg-blue-600 file:text-white file:px-4 file:py-2 file:rounded-lg" />
           
-          {password ? (
-            <div className="text-sm text-green-700 bg-green-100 px-3 py-2 rounded">🔐 Password set: <strong>{password}</strong></div>
-          ) : (
+          {!confirmedPassword ? (
             <div className="flex gap-2">
               <input type="password" placeholder="Set viewer password..." value={password} onChange={(e) => setPassword(e.target.value)} className="border p-2 w-full rounded" />
               <button onClick={handleSetPassword} className="bg-gray-700 text-white px-4 py-2 rounded-lg hover:bg-gray-900 transition">
                 Set Password
               </button>
             </div>
+          ) : (
+            <div className="text-sm text-green-700 font-semibold">
+              ✅ Password set: <span className="bg-green-100 px-2 py-1 rounded">{confirmedPassword}</span>
+            </div>
           )}
 
           {videoFile && (
             <>
-              <motion.video
-                ref={videoRef}
-                src={videoFile}
-                controls
-                muted
-                playsInline
-                className="w-full rounded-lg"
-              />
+              <motion.video ref={videoRef} src={videoFile} controls className="w-full rounded-lg" autoPlay muted playsInline />
               {!startBroadcast && (
                 <motion.button whileTap={{ scale: 0.95 }} onClick={() => setStartBroadcast(true)} className="bg-green-600 text-white px-6 py-2 rounded-lg">
                   Start Broadcast
@@ -289,17 +277,7 @@ export default function App() {
       ) : (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-white p-6 rounded-2xl shadow max-w-3xl w-full">
           <h2 className="text-xl text-center">👁️ Viewer Stream</h2>
-          <motion.video
-            ref={viewerVideoRef}
-            autoPlay
-            playsInline
-            controls
-            muted={false}
-            className="w-full rounded-lg"
-            initial={{ scale: 0.95, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ delay: 0.3 }}
-          />
+          <motion.video ref={viewerVideoRef} autoPlay playsInline controls muted={false} className="w-full rounded-lg" initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ delay: 0.3 }} />
         </motion.div>
       )}
     </div>
