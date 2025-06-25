@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { FaVideo, FaCopy, FaWhatsapp, FaInstagram, FaEye } from 'react-icons/fa';
 import './App.css';
 
-const socket = io('http://localhost:3000'); // Update for production
+const socket = io('https://video-streaming-platform-bf1p.onrender.com'); // Update for production
 
 export default function App() {
   const [role, setRole] = useState(null);
