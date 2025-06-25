@@ -6,18 +6,27 @@ const cors = require('cors');
 
 const app = express();
 const server = http.createServer(app);
+
+// Setup Socket.IO with CORS
 const io = new Server(server, {
-  cors: { origin: '*' },
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST']
+  }
 });
 
 app.use(cors());
+
+// Root route to test server availability on mobile
+app.get('/', (req, res) => {
+  res.send('✅ Signaling server is running!');
+});
 
 const rooms = {}; // roomId => { senderId, password, viewers: Set }
 
 io.on('connection', socket => {
   console.log('✅ New connection:', socket.id);
 
-  // Sender creates room
   socket.on('create-room', () => {
     const roomId = uuidv4();
     rooms[roomId] = {
@@ -30,19 +39,16 @@ io.on('connection', socket => {
     console.log(`📺 Room created: ${roomId}`);
   });
 
-  // Viewer joins
   socket.on('join-room', ({ roomId, password }) => {
     const room = rooms[roomId];
     if (!room) return;
 
-    // Validate password
     if (room.password && password !== room.password) {
       console.log('❌ Incorrect password from viewer:', socket.id);
       io.to(socket.id).emit('auth-failed');
       return;
     }
 
-    // Accept viewer
     socket.join(roomId);
     room.viewers.add(socket.id);
     console.log(`👤 Viewer ${socket.id} joined room ${roomId}`);
@@ -50,7 +56,6 @@ io.on('connection', socket => {
     updateViewerCount(roomId);
   });
 
-  // Sender sets password (first time viewer joins)
   socket.on('offer', ({ offer, target }) => {
     io.to(target).emit('offer', { offer, sender: socket.id });
   });
@@ -77,11 +82,18 @@ io.on('connection', socket => {
     io.to(viewerId).emit('auth-failed');
   });
 
+  socket.on('set-password', ({ roomId, password }) => {
+    const room = rooms[roomId];
+    if (room && room.senderId === socket.id) {
+      room.password = password;
+      console.log(`🔐 Password set for room ${roomId}`);
+    }
+  });
+
   socket.on('disconnect', () => {
     console.log('❌ Disconnected:', socket.id);
     Object.entries(rooms).forEach(([roomId, room]) => {
       if (room.senderId === socket.id) {
-        // Sender disconnected, remove room
         room.viewers.forEach(viewerId => {
           io.to(viewerId).emit('sync-control', { type: 'stop' });
         });
@@ -91,14 +103,6 @@ io.on('connection', socket => {
         updateViewerCount(roomId);
       }
     });
-  });
-
-  // Sender sets password (only once)
-  socket.on('set-password', ({ roomId, password }) => {
-    if (rooms[roomId] && rooms[roomId].senderId === socket.id) {
-      rooms[roomId].password = password;
-      console.log(`🔐 Password set for room ${roomId}`);
-    }
   });
 
   function updateViewerCount(roomId) {
@@ -114,9 +118,8 @@ io.on('connection', socket => {
   }
 });
 
+// 🚀 Start the server on all network interfaces (important for mobile)
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ Signaling server live on port ${PORT}`);
-
-
+  console.log(`✅ Signaling server live on http://<your-ip>:${PORT}`);
 });
