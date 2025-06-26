@@ -28,20 +28,45 @@ export default function App() {
     }
   }, [role]);
 
+  // 🎥 Start stream after play is confirmed
   useEffect(() => {
-    if (startBroadcast && videoRef.current) {
-      const stream = videoRef.current.captureStream();
-      mediaStreamRef.current = stream;
+    if (!startBroadcast || !videoRef.current) return;
+
+    const video = videoRef.current;
+
+    const handlePlay = () => {
+      try {
+        const stream = video.captureStream();
+        mediaStreamRef.current = stream;
+        setupSenderConnections(stream);
+      } catch (err) {
+        console.error('captureStream failed:', err);
+      }
+      video.removeEventListener('play', handlePlay);
+    };
+
+    if (video.readyState >= 3) {
+      video.play().then(() => handlePlay());
+    } else {
+      video.addEventListener('play', handlePlay);
+      video.play().catch(err => {
+        console.warn('Autoplay blocked. Wait for user interaction.', err);
+      });
     }
+
+    return () => {
+      video.removeEventListener('play', handlePlay);
+    };
   }, [startBroadcast]);
 
-  useEffect(() => {
-    if (!mediaStreamRef.current || !roomId || role !== 'sender') return;
+  const setupSenderConnections = (stream) => {
+    if (!roomId || role !== 'sender') return;
     const pcMap = new Map();
 
     socket.on('viewer-joined', async (viewerId) => {
       const pc = new RTCPeerConnection({
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+        sdpSemantics: 'unified-plan',
       });
 
       pc.onicecandidate = (e) => {
@@ -50,13 +75,12 @@ export default function App() {
         }
       };
 
-      mediaStreamRef.current.getTracks().forEach(track => {
-        pc.addTrack(track, mediaStreamRef.current);
-      });
+      stream.getTracks().forEach(track => pc.addTrack(track, stream));
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       socket.emit('offer', { offer, target: viewerId });
+
       pcMap.set(viewerId, pc);
     });
 
@@ -83,36 +107,27 @@ export default function App() {
       videoEl.removeEventListener('play', () => sync('play'));
       videoEl.removeEventListener('pause', () => sync('pause'));
     };
-  }, [mediaStreamRef.current, roomId, role]);
+  };
 
+  // 📺 Viewer Setup
   useEffect(() => {
     if (role !== 'viewer') return;
-
     const rid = new URLSearchParams(window.location.search).get('roomId');
     if (!rid) return;
 
     const pc = new RTCPeerConnection({
       iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+      sdpSemantics: 'unified-plan',
     });
 
     let senderId = null;
 
     pc.ontrack = ({ streams }) => {
-      const video = viewerVideoRef.current;
-      if (video) {
-        video.srcObject = streams[0];
-        video.muted = true; // allow autoplay
-        video.play().catch(() => {
-          console.warn('🔇 Autoplay failed. Requiring user interaction.');
-          const btn = document.createElement('button');
-          btn.textContent = 'Click to Start Stream';
-          btn.className = 'absolute z-50 top-4 left-4 bg-blue-600 text-white px-4 py-2 rounded shadow';
-          btn.onclick = () => {
-            video.play();
-            video.muted = false; // unmute after interaction
-            btn.remove();
-          };
-          document.body.appendChild(btn);
+      if (viewerVideoRef.current) {
+        viewerVideoRef.current.srcObject = streams[0];
+        viewerVideoRef.current.volume = 1;
+        viewerVideoRef.current.play().catch(err => {
+          console.warn('Autoplay blocked in viewer:', err);
         });
       }
     };
@@ -159,26 +174,38 @@ export default function App() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-100 via-white to-purple-100 px-4">
       {!role ? (
-        <motion.div initial={{opacity:0,y:30}} animate={{opacity:1,y:0}} transition={{duration:0.6}} className="bg-white p-8 rounded-2xl shadow max-w-md w-full text-center">
+        <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }} className="bg-white p-8 rounded-2xl shadow max-w-md w-full text-center">
           <h1 className="text-2xl font-bold mb-6">Start Your Video Broadcast</h1>
-          <motion.button whileHover={{scale:1.05}} whileTap={{scale:0.95}} onClick={() => setRole('sender')} className="bg-blue-600 text-white py-2 px-4 rounded-lg w-full flex justify-center gap-2 items-center">
+          <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => setRole('sender')} className="bg-blue-600 text-white py-2 px-4 rounded-lg w-full flex justify-center items-center gap-2">
             <FaVideo /> Sender
           </motion.button>
         </motion.div>
       ) : role === 'sender' ? (
-        <motion.div initial={{opacity:0}} animate={{opacity:1}} className="bg-white p-6 rounded-2xl shadow max-w-3xl w-full space-y-6">
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-white p-6 rounded-2xl shadow max-w-3xl w-full space-y-6">
           <h2 className="text-2xl text-center">🎥 Sender Broadcast</h2>
           <input type="file" accept="video/*" onChange={e => setVideoFile(URL.createObjectURL(e.target.files[0]))} className="file:bg-blue-600 file:text-white file:px-4 file:py-2 file:rounded-lg" />
           {videoFile && (
             <>
-              <motion.video ref={videoRef} src={videoFile} controls className="w-full rounded-lg" autoPlay muted playsInline />
-              {!startBroadcast && <motion.button whileTap={{scale:0.95}} onClick={() => setStartBroadcast(true)} className="bg-green-600 text-white px-6 py-2 rounded-lg">Start Broadcast</motion.button>}
+              <motion.video
+                ref={videoRef}
+                src={videoFile}
+                controls
+                autoPlay
+                muted
+                playsInline
+                className="w-full rounded-lg"
+              />
+              {!startBroadcast && (
+                <motion.button whileTap={{ scale: 0.95 }} onClick={() => setStartBroadcast(true)} className="bg-green-600 text-white px-6 py-2 rounded-lg mt-4">
+                  Start Broadcast
+                </motion.button>
+              )}
               {roomId && (
                 <div className="space-y-2 text-center">
                   <p className="text-gray-700">Viewer Link:</p>
                   <p className="text-blue-600 break-all">{shareLink}</p>
                   <div className="flex justify-center gap-4 mt-2 flex-wrap">
-                    <motion.button whileTap={{scale:0.95}} onClick={handleCopy} className="bg-gray-800 text-white px-4 py-2 rounded-lg flex items-center gap-2">
+                    <motion.button whileTap={{ scale: 0.95 }} onClick={handleCopy} className="bg-gray-800 text-white px-4 py-2 rounded-lg flex items-center gap-2">
                       <FaCopy /> {copied ? 'Copied!' : 'Copy Link'}
                     </motion.button>
                     <a href={`https://wa.me/?text=${encodeURIComponent(shareLink)}`} target="_blank" rel="noreferrer" className="bg-green-500 text-white px-4 py-2 rounded-lg flex items-center gap-2"><FaWhatsapp /> WhatsApp</a>
@@ -190,19 +217,9 @@ export default function App() {
           )}
         </motion.div>
       ) : (
-        <motion.div initial={{opacity:0}} animate={{opacity:1}} className="bg-white p-6 rounded-2xl shadow max-w-3xl w-full">
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-white p-6 rounded-2xl shadow max-w-3xl w-full">
           <h2 className="text-xl text-center">👁️ Viewer Stream</h2>
-          <motion.video
-            ref={viewerVideoRef}
-            autoPlay
-            playsInline
-            controls
-            muted={true}
-            className="w-full rounded-lg"
-            initial={{scale:0.95,opacity:0}}
-            animate={{scale:1,opacity:1}}
-            transition={{delay:0.3}}
-          />
+          <motion.video ref={viewerVideoRef} autoPlay playsInline controls muted={false} className="w-full rounded-lg" initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ delay: 0.3 }} />
         </motion.div>
       )}
     </div>
