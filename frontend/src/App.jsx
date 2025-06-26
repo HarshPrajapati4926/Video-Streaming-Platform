@@ -12,6 +12,8 @@ export default function App() {
   const [startBroadcast, setStartBroadcast] = useState(false);
   const [roomId, setRoomId] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
+
   const videoRef = useRef(null);
   const viewerVideoRef = useRef(null);
   const mediaStreamRef = useRef(null);
@@ -28,39 +30,15 @@ export default function App() {
     }
   }, [role]);
 
-  // 🎥 Start stream after play is confirmed
   useEffect(() => {
-    if (!startBroadcast || !videoRef.current) return;
-
-    const video = videoRef.current;
-
-    const handlePlay = () => {
-      try {
-        const stream = video.captureStream();
-        mediaStreamRef.current = stream;
-        setupSenderConnections(stream);
-      } catch (err) {
-        console.error('captureStream failed:', err);
-      }
-      video.removeEventListener('play', handlePlay);
-    };
-
-    if (video.readyState >= 3) {
-      video.play().then(() => handlePlay());
-    } else {
-      video.addEventListener('play', handlePlay);
-      video.play().catch(err => {
-        console.warn('Autoplay blocked. Wait for user interaction.', err);
-      });
+    if (startBroadcast && videoRef.current) {
+      const stream = videoRef.current.captureStream();
+      mediaStreamRef.current = stream;
     }
-
-    return () => {
-      video.removeEventListener('play', handlePlay);
-    };
   }, [startBroadcast]);
 
-  const setupSenderConnections = (stream) => {
-    if (!roomId || role !== 'sender') return;
+  useEffect(() => {
+    if (!mediaStreamRef.current || !roomId || role !== 'sender') return;
     const pcMap = new Map();
 
     socket.on('viewer-joined', async (viewerId) => {
@@ -70,17 +48,16 @@ export default function App() {
       });
 
       pc.onicecandidate = (e) => {
-        if (e.candidate) {
-          socket.emit('ice-candidate', { candidate: e.candidate, target: viewerId });
-        }
+        e.candidate && socket.emit('ice-candidate', { candidate: e.candidate, target: viewerId });
       };
 
-      stream.getTracks().forEach(track => pc.addTrack(track, stream));
+      mediaStreamRef.current.getTracks().forEach(track => {
+        pc.addTrack(track, mediaStreamRef.current);
+      });
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       socket.emit('offer', { offer, target: viewerId });
-
       pcMap.set(viewerId, pc);
     });
 
@@ -107,9 +84,8 @@ export default function App() {
       videoEl.removeEventListener('play', () => sync('play'));
       videoEl.removeEventListener('pause', () => sync('pause'));
     };
-  };
+  }, [mediaStreamRef.current, roomId, role]);
 
-  // 📺 Viewer Setup
   useEffect(() => {
     if (role !== 'viewer') return;
     const rid = new URLSearchParams(window.location.search).get('roomId');
@@ -121,21 +97,25 @@ export default function App() {
     });
 
     let senderId = null;
-
     pc.ontrack = ({ streams }) => {
-      if (viewerVideoRef.current) {
-        viewerVideoRef.current.srcObject = streams[0];
-        viewerVideoRef.current.volume = 1;
-        viewerVideoRef.current.play().catch(err => {
-          console.warn('Autoplay blocked in viewer:', err);
+      const video = viewerVideoRef.current;
+      if (!video) return;
+
+      video.srcObject = streams[0];
+      video.muted = true; // mute to allow autoplay
+      video
+        .play()
+        .then(() => {
+          console.log('Autoplay succeeded');
+        })
+        .catch((err) => {
+          console.warn('Autoplay blocked:', err);
+          setAutoplayBlocked(true);
         });
-      }
     };
 
     pc.onicecandidate = (e) => {
-      if (e.candidate && senderId) {
-        socket.emit('ice-candidate', { candidate: e.candidate, target: senderId });
-      }
+      e.candidate && senderId && socket.emit('ice-candidate', { candidate: e.candidate, target: senderId });
     };
 
     socket.emit('join-room', rid);
@@ -148,15 +128,10 @@ export default function App() {
       socket.emit('answer', { answer: ans, target: sender });
     });
 
-    socket.on('ice-candidate', (candidate) => {
-      pc.addIceCandidate(new RTCIceCandidate(candidate));
-    });
-
+    socket.on('ice-candidate', (candidate) => pc.addIceCandidate(new RTCIceCandidate(candidate)));
     socket.on('sync-control', ({ type }) => {
       const v = viewerVideoRef.current;
-      if (v) {
-        type === 'play' ? v.play() : v.pause();
-      }
+      v && (type === 'play' ? v.play() : v.pause());
     });
 
     return () => pc.close();
@@ -176,7 +151,7 @@ export default function App() {
       {!role ? (
         <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }} className="bg-white p-8 rounded-2xl shadow max-w-md w-full text-center">
           <h1 className="text-2xl font-bold mb-6">Start Your Video Broadcast</h1>
-          <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => setRole('sender')} className="bg-blue-600 text-white py-2 px-4 rounded-lg w-full flex justify-center items-center gap-2">
+          <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={() => setRole('sender')} className="bg-blue-600 text-white py-2 px-4 rounded-lg w-full flex items-center justify-center gap-2">
             <FaVideo /> Sender
           </motion.button>
         </motion.div>
@@ -186,17 +161,9 @@ export default function App() {
           <input type="file" accept="video/*" onChange={e => setVideoFile(URL.createObjectURL(e.target.files[0]))} className="file:bg-blue-600 file:text-white file:px-4 file:py-2 file:rounded-lg" />
           {videoFile && (
             <>
-              <motion.video
-                ref={videoRef}
-                src={videoFile}
-                controls
-                autoPlay
-                muted
-                playsInline
-                className="w-full rounded-lg"
-              />
+              <motion.video ref={videoRef} src={videoFile} controls className="w-full rounded-lg" autoPlay muted playsInline />
               {!startBroadcast && (
-                <motion.button whileTap={{ scale: 0.95 }} onClick={() => setStartBroadcast(true)} className="bg-green-600 text-white px-6 py-2 rounded-lg mt-4">
+                <motion.button whileTap={{ scale: 0.95 }} onClick={() => setStartBroadcast(true)} className="bg-green-600 text-white px-6 py-2 rounded-lg">
                   Start Broadcast
                 </motion.button>
               )}
@@ -219,7 +186,21 @@ export default function App() {
       ) : (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-white p-6 rounded-2xl shadow max-w-3xl w-full">
           <h2 className="text-xl text-center">👁️ Viewer Stream</h2>
-          <motion.video ref={viewerVideoRef} autoPlay playsInline controls muted={false} className="w-full rounded-lg" initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ delay: 0.3 }} />
+          <motion.video ref={viewerVideoRef} autoPlay playsInline controls muted className="w-full rounded-lg" initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ delay: 0.3 }} />
+          {autoplayBlocked && (
+            <div className="text-center mt-4">
+              <button
+                onClick={() => {
+                  const v = viewerVideoRef.current;
+                  v.muted = false;
+                  v.play().then(() => setAutoplayBlocked(false));
+                }}
+                className="bg-blue-600 text-white px-4 py-2 rounded-lg"
+              >
+                Tap to Play Stream
+              </button>
+            </div>
+          )}
         </motion.div>
       )}
     </div>
