@@ -14,7 +14,7 @@ const io = socketIo(server, {
   },
 });
 
-const rooms = {}; // roomId: { sender, viewers: Set }
+const rooms = {};
 
 io.on('connection', (socket) => {
   console.log('🔌 Client connected:', socket.id);

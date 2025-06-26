@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { motion } from 'framer-motion';
-import { FaVideo, FaCopy, FaWhatsapp, FaInstagram } from 'react-icons/fa';
+import { FaVideo, FaCopy, FaWhatsapp, FaInstagram, FaVolumeUp } from 'react-icons/fa';
 import './App.css';
 
 const socket = io('https://video-streaming-platform-bf1p.onrender.com');
@@ -12,6 +12,8 @@ export default function App() {
   const [startBroadcast, setStartBroadcast] = useState(false);
   const [roomId, setRoomId] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
+  const [showUnmute, setShowUnmute] = useState(false);
   const videoRef = useRef(null);
   const viewerVideoRef = useRef(null);
   const mediaStreamRef = useRef(null); // Holds the A/V stream
@@ -28,7 +30,6 @@ export default function App() {
     }
   }, [role]);
 
-  // Capture video + audio once when broadcast starts
   useEffect(() => {
     if (startBroadcast && videoRef.current) {
       const stream = videoRef.current.captureStream();
@@ -39,7 +40,6 @@ export default function App() {
     }
   }, [startBroadcast]);
 
-  // Sender: handle new viewers
   useEffect(() => {
     if (!mediaStreamRef.current || !roomId || role !== 'sender') return;
     const pcMap = new Map();
@@ -89,7 +89,6 @@ export default function App() {
     };
   }, [mediaStreamRef.current, roomId, role]);
 
-  // Viewer: handle incoming connection
   useEffect(() => {
     if (role !== 'viewer') return;
     const rid = new URLSearchParams(window.location.search).get('roomId');
@@ -101,12 +100,27 @@ export default function App() {
     });
 
     let senderId = null;
+
     pc.ontrack = ({ streams }) => {
-      if (viewerVideoRef.current) {
-        viewerVideoRef.current.srcObject = streams[0];
-        viewerVideoRef.current.volume = 1;
-        viewerVideoRef.current.play().catch(e => console.warn('Autoplay blocked', e));
-      }
+      const video = viewerVideoRef.current;
+      if (!video) return;
+
+      video.muted = true;
+      video.playsInline = true;
+      video.srcObject = streams[0];
+
+      // Attempt autoplay
+      setTimeout(() => {
+        video.play()
+          .then(() => {
+            setAutoplayBlocked(false);
+            setShowUnmute(true);
+          })
+          .catch(err => {
+            console.warn('Autoplay blocked', err);
+            setAutoplayBlocked(true);
+          });
+      }, 0);
     };
 
     pc.onicecandidate = (e) => {
@@ -139,6 +153,22 @@ export default function App() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleUnmute = () => {
+    const v = viewerVideoRef.current;
+    if (v) {
+      v.muted = false;
+      v.volume = 1;
+      setShowUnmute(false);
+    }
+  };
+
+  const handleManualPlay = () => {
+    const v = viewerVideoRef.current;
+    if (v) {
+      v.play().then(() => setAutoplayBlocked(false)).catch(console.warn);
+    }
+  };
+
   const shareLink = roomId ? `${window.location.origin}?roomId=${roomId}` : '';
 
   return (
@@ -162,7 +192,7 @@ export default function App() {
                 <div className="space-y-2 text-center">
                   <p className="text-gray-700">Viewer Link:</p>
                   <p className="text-blue-600 break-all">{shareLink}</p>
-                  <div className="flex justify-center gap-4 mt-2">
+                  <div className="flex justify-center gap-4 mt-2 flex-wrap">
                     <motion.button whileTap={{scale:0.95}} onClick={handleCopy} className="bg-gray-800 text-white px-4 py-2 rounded-lg">
                       <FaCopy /> {copied ? 'Copied!' : 'Copy Link'}
                     </motion.button>
@@ -176,8 +206,28 @@ export default function App() {
         </motion.div>
       ) : (
         <motion.div initial={{opacity:0}} animate={{opacity:1}} className="bg-white p-6 rounded-2xl shadow max-w-3xl w-full">
-          <h2 className="text-xl text-center">👁️ Viewer Stream</h2>
-          <motion.video ref={viewerVideoRef} autoPlay playsInline controls muted={false} className="w-full rounded-lg" initial={{scale:0.95,opacity:0}} animate={{scale:1,opacity:1}} transition={{delay:0.3}} />
+          <h2 className="text-xl text-center mb-2">👁️ Viewer Stream</h2>
+          <motion.video
+            ref={viewerVideoRef}
+            autoPlay
+            playsInline
+            muted
+            controls
+            className="w-full rounded-lg"
+            initial={{scale:0.95,opacity:0}}
+            animate={{scale:1,opacity:1}}
+            transition={{delay:0.3}}
+          />
+          {autoplayBlocked && (
+            <button onClick={handleManualPlay} className="mt-4 bg-red-500 text-white px-4 py-2 rounded-lg">
+              Tap to Start Video
+            </button>
+          )}
+          {showUnmute && (
+            <button onClick={handleUnmute} className="mt-2 bg-yellow-500 text-black px-4 py-2 rounded-lg flex items-center justify-center gap-2">
+              <FaVolumeUp /> Unmute
+            </button>
+          )}
         </motion.div>
       )}
     </div>
