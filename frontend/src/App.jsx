@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { motion } from 'framer-motion';
-import { FaVideo, FaCopy, FaWhatsapp, FaInstagram, FaVolumeUp } from 'react-icons/fa';
+import { FaVideo, FaCopy, FaWhatsapp, FaInstagram } from 'react-icons/fa';
 import './App.css';
 
 const socket = io('https://video-streaming-platform-bf1p.onrender.com');
@@ -12,11 +12,9 @@ export default function App() {
   const [startBroadcast, setStartBroadcast] = useState(false);
   const [roomId, setRoomId] = useState(null);
   const [copied, setCopied] = useState(false);
-  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
-  const [showUnmute, setShowUnmute] = useState(false);
   const videoRef = useRef(null);
   const viewerVideoRef = useRef(null);
-  const mediaStreamRef = useRef(null); // Holds the A/V stream
+  const mediaStreamRef = useRef(null);
 
   useEffect(() => {
     const q = new URLSearchParams(window.location.search).get('roomId');
@@ -34,9 +32,6 @@ export default function App() {
     if (startBroadcast && videoRef.current) {
       const stream = videoRef.current.captureStream();
       mediaStreamRef.current = stream;
-      if (stream.getAudioTracks().length === 0) {
-        console.warn('⚠️ No audio track detected.');
-      }
     }
   }, [startBroadcast]);
 
@@ -47,11 +42,12 @@ export default function App() {
     socket.on('viewer-joined', async (viewerId) => {
       const pc = new RTCPeerConnection({
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-        sdpSemantics: 'unified-plan',
       });
 
       pc.onicecandidate = (e) => {
-        e.candidate && socket.emit('ice-candidate', { candidate: e.candidate, target: viewerId });
+        if (e.candidate) {
+          socket.emit('ice-candidate', { candidate: e.candidate, target: viewerId });
+        }
       };
 
       mediaStreamRef.current.getTracks().forEach(track => {
@@ -91,40 +87,40 @@ export default function App() {
 
   useEffect(() => {
     if (role !== 'viewer') return;
+
     const rid = new URLSearchParams(window.location.search).get('roomId');
     if (!rid) return;
 
     const pc = new RTCPeerConnection({
       iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-      sdpSemantics: 'unified-plan',
     });
 
     let senderId = null;
 
     pc.ontrack = ({ streams }) => {
       const video = viewerVideoRef.current;
-      if (!video) return;
-
-      video.muted = true;
-      video.playsInline = true;
-      video.srcObject = streams[0];
-
-      // Attempt autoplay
-      setTimeout(() => {
-        video.play()
-          .then(() => {
-            setAutoplayBlocked(false);
-            setShowUnmute(true);
-          })
-          .catch(err => {
-            console.warn('Autoplay blocked', err);
-            setAutoplayBlocked(true);
-          });
-      }, 0);
+      if (video) {
+        video.srcObject = streams[0];
+        video.muted = true; // allow autoplay
+        video.play().catch(() => {
+          console.warn('🔇 Autoplay failed. Requiring user interaction.');
+          const btn = document.createElement('button');
+          btn.textContent = 'Click to Start Stream';
+          btn.className = 'absolute z-50 top-4 left-4 bg-blue-600 text-white px-4 py-2 rounded shadow';
+          btn.onclick = () => {
+            video.play();
+            video.muted = false; // unmute after interaction
+            btn.remove();
+          };
+          document.body.appendChild(btn);
+        });
+      }
     };
 
     pc.onicecandidate = (e) => {
-      e.candidate && senderId && socket.emit('ice-candidate', { candidate: e.candidate, target: senderId });
+      if (e.candidate && senderId) {
+        socket.emit('ice-candidate', { candidate: e.candidate, target: senderId });
+      }
     };
 
     socket.emit('join-room', rid);
@@ -137,10 +133,15 @@ export default function App() {
       socket.emit('answer', { answer: ans, target: sender });
     });
 
-    socket.on('ice-candidate', (candidate) => pc.addIceCandidate(new RTCIceCandidate(candidate)));
+    socket.on('ice-candidate', (candidate) => {
+      pc.addIceCandidate(new RTCIceCandidate(candidate));
+    });
+
     socket.on('sync-control', ({ type }) => {
       const v = viewerVideoRef.current;
-      v && (type === 'play' ? v.play() : v.pause());
+      if (v) {
+        type === 'play' ? v.play() : v.pause();
+      }
     });
 
     return () => pc.close();
@@ -153,22 +154,6 @@ export default function App() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleUnmute = () => {
-    const v = viewerVideoRef.current;
-    if (v) {
-      v.muted = false;
-      v.volume = 1;
-      setShowUnmute(false);
-    }
-  };
-
-  const handleManualPlay = () => {
-    const v = viewerVideoRef.current;
-    if (v) {
-      v.play().then(() => setAutoplayBlocked(false)).catch(console.warn);
-    }
-  };
-
   const shareLink = roomId ? `${window.location.origin}?roomId=${roomId}` : '';
 
   return (
@@ -176,7 +161,7 @@ export default function App() {
       {!role ? (
         <motion.div initial={{opacity:0,y:30}} animate={{opacity:1,y:0}} transition={{duration:0.6}} className="bg-white p-8 rounded-2xl shadow max-w-md w-full text-center">
           <h1 className="text-2xl font-bold mb-6">Start Your Video Broadcast</h1>
-          <motion.button whileHover={{scale:1.05}} whileTap={{scale:0.95}} onClick={() => setRole('sender')} className="bg-blue-600 text-white py-2 px-4 rounded-lg w-full">
+          <motion.button whileHover={{scale:1.05}} whileTap={{scale:0.95}} onClick={() => setRole('sender')} className="bg-blue-600 text-white py-2 px-4 rounded-lg w-full flex justify-center gap-2 items-center">
             <FaVideo /> Sender
           </motion.button>
         </motion.div>
@@ -193,7 +178,7 @@ export default function App() {
                   <p className="text-gray-700">Viewer Link:</p>
                   <p className="text-blue-600 break-all">{shareLink}</p>
                   <div className="flex justify-center gap-4 mt-2 flex-wrap">
-                    <motion.button whileTap={{scale:0.95}} onClick={handleCopy} className="bg-gray-800 text-white px-4 py-2 rounded-lg">
+                    <motion.button whileTap={{scale:0.95}} onClick={handleCopy} className="bg-gray-800 text-white px-4 py-2 rounded-lg flex items-center gap-2">
                       <FaCopy /> {copied ? 'Copied!' : 'Copy Link'}
                     </motion.button>
                     <a href={`https://wa.me/?text=${encodeURIComponent(shareLink)}`} target="_blank" rel="noreferrer" className="bg-green-500 text-white px-4 py-2 rounded-lg flex items-center gap-2"><FaWhatsapp /> WhatsApp</a>
@@ -206,28 +191,18 @@ export default function App() {
         </motion.div>
       ) : (
         <motion.div initial={{opacity:0}} animate={{opacity:1}} className="bg-white p-6 rounded-2xl shadow max-w-3xl w-full">
-          <h2 className="text-xl text-center mb-2">👁️ Viewer Stream</h2>
+          <h2 className="text-xl text-center">👁️ Viewer Stream</h2>
           <motion.video
             ref={viewerVideoRef}
             autoPlay
             playsInline
-            muted
             controls
+            muted={true}
             className="w-full rounded-lg"
             initial={{scale:0.95,opacity:0}}
             animate={{scale:1,opacity:1}}
             transition={{delay:0.3}}
           />
-          {autoplayBlocked && (
-            <button onClick={handleManualPlay} className="mt-4 bg-red-500 text-white px-4 py-2 rounded-lg">
-              Tap to Start Video
-            </button>
-          )}
-          {showUnmute && (
-            <button onClick={handleUnmute} className="mt-2 bg-yellow-500 text-black px-4 py-2 rounded-lg flex items-center justify-center gap-2">
-              <FaVolumeUp /> Unmute
-            </button>
-          )}
         </motion.div>
       )}
     </div>
